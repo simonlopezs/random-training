@@ -6,14 +6,35 @@ const store = useTrainingStore()
 
 <template>
   <div class="flex min-h-[80vh] flex-col items-center justify-center gap-6 px-4 text-center">
-    <span class="text-7xl">🎉</span>
-    <h2 class="text-3xl font-bold text-foreground">¡Entrenamiento completado!</h2>
+    <span class="text-7xl">{{ store.completedCount < store.totalCards ? '💪' : '🎉' }}</span>
+    <h2 class="text-3xl font-bold text-foreground">
+      {{ store.completedCount < store.totalCards ? '¡Entrenamiento terminado!' : '¡Entrenamiento completado!' }}
+    </h2>
     <p class="text-4xl font-mono font-bold text-foreground">
       {{ store.formattedTime }}
     </p>
     <p class="text-lg text-muted-foreground">
-      {{ store.completedCount }} series completadas
+      {{ store.completedCount }} de {{ store.totalCards }} {{ store.completedCount === 1 ? 'serie completada' : 'series completadas' }}
     </p>
+
+    <div class="w-full max-w-xs rounded-xl border border-border bg-card p-4 text-left">
+      <ul class="flex flex-col gap-2">
+        <li
+          v-for="item in store.completedBreakdown"
+          :key="item.exercise.id"
+          class="flex items-center justify-between text-sm"
+        >
+          <span class="text-foreground">{{ item.exercise.name }}</span>
+          <span class="text-right text-muted-foreground">
+            <span>{{ item.total }} {{ item.total === 1 ? 'serie' : 'series' }} · {{ item.reps }} reps</span>
+            <span v-if="item.surprises > 0" class="block text-amber-500">
+              {{ item.surprises }} {{ item.surprises === 1 ? 'sorpresa' : 'sorpresas' }}
+            </span>
+          </span>
+        </li>
+      </ul>
+    </div>
+
     <button
       @click="store.reset()"
       class="mt-4 rounded-lg bg-primary px-8 py-4 text-lg font-semibold text-primary-foreground shadow-md transition-transform active:scale-95"
