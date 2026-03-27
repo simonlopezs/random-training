@@ -104,7 +104,7 @@ const showFinishSheet = ref(false)
             </button>
             <button
               @click="showFinishSheet = false; store.finishEarly()"
-              class="flex-1 rounded-lg bg-destructive px-6 py-3 font-semibold text-destructive-foreground active:scale-95"
+              class="flex-1 rounded-lg bg-primary px-6 py-3 font-semibold text-primary-foreground active:scale-95"
             >
               Terminar
             </button>

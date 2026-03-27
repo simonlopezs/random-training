@@ -33,6 +33,17 @@ export interface CurrentCard {
   surprise: boolean
 }
 
+export interface SeriesLog {
+  exerciseId: string
+  exerciseName: string
+  reps: number
+  surprise: boolean
+  startedAt: number
+  finishedAt: number
+  durationSecs: number
+  secsPerRep: number
+}
+
 export const useTrainingStore = defineStore('training', () => {
   const currentStep = ref(0)
   const selectedExerciseIds = ref<string[]>([])
@@ -52,6 +63,8 @@ export const useTrainingStore = defineStore('training', () => {
   const completedCount = ref(0)
   const totalCards = ref(0)
   const completedCards = ref<Card[]>([])
+  const seriesLog = ref<SeriesLog[]>([])
+  let cardStartedAt = 0
 
   // Timer
   const startTime = ref(0)
@@ -109,6 +122,24 @@ export const useTrainingStore = defineStore('training', () => {
     return Array.from(map.values())
   })
 
+  const avgSecsPerRepByExercise = computed(() => {
+    const map = new Map<string, { exercise: Exercise; totalReps: number; totalSecs: number }>()
+    for (const log of seriesLog.value) {
+      const entry = map.get(log.exerciseId)
+      if (entry) {
+        entry.totalReps += log.reps
+        entry.totalSecs += log.durationSecs
+      } else {
+        const exercise = EXERCISES.find((e) => e.id === log.exerciseId)!
+        map.set(log.exerciseId, { exercise, totalReps: log.reps, totalSecs: log.durationSecs })
+      }
+    }
+    return Array.from(map.values()).map((e) => ({
+      exercise: e.exercise,
+      avgSecsPerRep: e.totalReps > 0 ? Math.round((e.totalSecs / e.totalReps) * 100) / 100 : 0,
+    }))
+  })
+
   function toggleExercise(id: string) {
     const idx = selectedExerciseIds.value.indexOf(id)
     if (idx === -1) {
@@ -139,11 +170,31 @@ export const useTrainingStore = defineStore('training', () => {
     totalCards.value = cards.length
     completedCount.value = 0
     completedCards.value = []
+    seriesLog.value = []
+    cardStartedAt = 0
     currentCard.value = null
+  }
+
+  function logCurrentCard() {
+    if (currentCard.value && cardStartedAt > 0) {
+      const now = Date.now()
+      const durationSecs = Math.round(((now - cardStartedAt) / 1000) * 100) / 100
+      seriesLog.value.push({
+        exerciseId: currentCard.value.exercise.id,
+        exerciseName: currentCard.value.exercise.name,
+        reps: currentCard.value.reps,
+        surprise: currentCard.value.surprise,
+        startedAt: cardStartedAt,
+        finishedAt: now,
+        durationSecs,
+        secsPerRep: currentCard.value.reps > 0 ? Math.round((durationSecs / currentCard.value.reps) * 100) / 100 : 0,
+      })
+    }
   }
 
   function drawCard() {
     if (deck.value.length === 0) return
+    logCurrentCard()
     const idx = Math.floor(Math.random() * deck.value.length)
     const card = deck.value[idx]!
     deck.value.splice(idx, 1)
@@ -151,6 +202,7 @@ export const useTrainingStore = defineStore('training', () => {
     currentCard.value = { exercise, reps: card.reps, surprise: !!card.surprise }
     completedCards.value.push(card)
     completedCount.value++
+    cardStartedAt = Date.now()
   }
 
   function startTraining() {
@@ -164,6 +216,7 @@ export const useTrainingStore = defineStore('training', () => {
     if (deck.value.length > 0) {
       drawCard()
     } else {
+      logCurrentCard()
       stopTimer()
       currentCard.value = null
       currentStep.value = 4 // done
@@ -179,6 +232,7 @@ export const useTrainingStore = defineStore('training', () => {
   }
 
   function finishEarly() {
+    logCurrentCard()
     stopTimer()
     currentStep.value = 4
   }
@@ -197,6 +251,8 @@ export const useTrainingStore = defineStore('training', () => {
     deck.value = []
     currentCard.value = null
     completedCards.value = []
+    seriesLog.value = []
+    cardStartedAt = 0
     completedCount.value = 0
     totalCards.value = 0
     elapsedSeconds.value = 0
@@ -223,6 +279,8 @@ export const useTrainingStore = defineStore('training', () => {
     currentCard,
     completedCount,
     completedBreakdown,
+    seriesLog,
+    avgSecsPerRepByExercise,
     totalCards,
     elapsedSeconds,
     formattedTime,
