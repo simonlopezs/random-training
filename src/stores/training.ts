@@ -5,20 +5,21 @@ export interface Exercise {
   id: string
   name: string
   singular: string
+  feminine: boolean
   image: string
 }
 
 const IMG_BASE = 'https://raw.githubusercontent.com/yuhonas/free-exercise-db/main/exercises'
 
 export const EXERCISES: Exercise[] = [
-  { id: 'squats', name: 'Sentadillas', singular: 'Sentadilla', image: `${IMG_BASE}/Bodyweight_Squat/1.jpg` },
-  { id: 'pushups', name: 'Flexiones', singular: 'Flexión', image: `${IMG_BASE}/Close-Grip_Push-Up_off_of_a_Dumbbell/1.jpg` },
-  { id: 'pullups', name: 'Dominadas', singular: 'Dominada', image: `${IMG_BASE}/Chin-Up/1.jpg` },
-  { id: 'burpees', name: 'Burpees', singular: 'Burpee', image: `${IMG_BASE}/Freehand_Jump_Squat/1.jpg` },
-  { id: 'dips', name: 'Fondos', singular: 'Fondo', image: `${IMG_BASE}/Dips_-_Triceps_Version/1.jpg` },
-  { id: 'leg-raises', name: 'Elevaciones de piernas', singular: 'Elevación de piernas', image: `${IMG_BASE}/Hanging_Leg_Raise/1.jpg` },
-  { id: 'mountain-climbers', name: 'Escaladores', singular: 'Escalador', image: `${IMG_BASE}/Mountain_Climbers/1.jpg` },
-  { id: 'lunges', name: 'Zancadas', singular: 'Zancada', image: `${IMG_BASE}/Bodyweight_Walking_Lunge/1.jpg` },
+  { id: 'squats', name: 'Sentadillas', singular: 'Sentadilla', feminine: true, image: `${IMG_BASE}/Bodyweight_Squat/1.jpg` },
+  { id: 'pushups', name: 'Flexiones', singular: 'Flexión', feminine: true, image: `${IMG_BASE}/Close-Grip_Push-Up_off_of_a_Dumbbell/1.jpg` },
+  { id: 'pullups', name: 'Dominadas', singular: 'Dominada', feminine: true, image: `${IMG_BASE}/Chin-Up/1.jpg` },
+  { id: 'burpees', name: 'Burpees', singular: 'Burpee', feminine: false, image: `${IMG_BASE}/Freehand_Jump_Squat/1.jpg` },
+  { id: 'dips', name: 'Fondos', singular: 'Fondo', feminine: false, image: `${IMG_BASE}/Dips_-_Triceps_Version/1.jpg` },
+  { id: 'leg-raises', name: 'Elevaciones de piernas', singular: 'Elevación de piernas', feminine: true, image: `${IMG_BASE}/Hanging_Leg_Raise/1.jpg` },
+  { id: 'mountain-climbers', name: 'Escaladores', singular: 'Escalador', feminine: false, image: `${IMG_BASE}/Mountain_Climbers/1.jpg` },
+  { id: 'lunges', name: 'Zancadas', singular: 'Zancada', feminine: true, image: `${IMG_BASE}/Bodyweight_Walking_Lunge/1.jpg` },
 ]
 
 export interface Card {
@@ -57,6 +58,9 @@ export const useTrainingStore = defineStore('training', () => {
   const surpriseCount = ref(4)
   const surpriseReps = ref(Math.round(1.5 * 10))
 
+  // Rest between sets
+  const restSeconds = ref(3)
+
   // Training deck state
   const deck = ref<Card[]>([])
   const currentCard = ref<CurrentCard | null>(null)
@@ -66,26 +70,34 @@ export const useTrainingStore = defineStore('training', () => {
   const seriesLog = ref<SeriesLog[]>([])
   let cardStartedAt = 0
 
-  // Timer
-  const startTime = ref(0)
-  const endTime = ref(0)
+  // Timer (tracks only training time, excludes rest)
   const elapsedSeconds = ref(0)
   let timerInterval: ReturnType<typeof setInterval> | null = null
+  let timerRunning = false
 
   function startTimer() {
-    startTime.value = Date.now()
+    timerRunning = true
     timerInterval = setInterval(() => {
-      elapsedSeconds.value = Math.floor((Date.now() - startTime.value) / 1000)
+      if (timerRunning) {
+        elapsedSeconds.value++
+      }
     }, 1000)
   }
 
+  function pauseTimer() {
+    timerRunning = false
+  }
+
+  function resumeTimer() {
+    timerRunning = true
+  }
+
   function stopTimer() {
+    timerRunning = false
     if (timerInterval) {
       clearInterval(timerInterval)
       timerInterval = null
     }
-    endTime.value = Date.now()
-    elapsedSeconds.value = Math.floor((endTime.value - startTime.value) / 1000)
   }
 
   const formattedTime = computed(() => {
@@ -192,6 +204,22 @@ export const useTrainingStore = defineStore('training', () => {
     }
   }
 
+  // Peek at next card without drawing (for announcements during rest)
+  const nextCardPreview = ref<CurrentCard | null>(null)
+
+  function peekNextCard() {
+    if (deck.value.length === 0) {
+      nextCardPreview.value = null
+      return
+    }
+    const idx = Math.floor(Math.random() * deck.value.length)
+    const card = deck.value[idx]!
+    deck.value.splice(idx, 1)
+    const exercise = EXERCISES.find((e) => e.id === card.exerciseId)!
+    nextCardPreview.value = { exercise, reps: card.reps, surprise: !!card.surprise }
+    completedCards.value.push(card)
+  }
+
   function drawCard() {
     if (deck.value.length === 0) return
     logCurrentCard()
@@ -205,21 +233,41 @@ export const useTrainingStore = defineStore('training', () => {
     cardStartedAt = Date.now()
   }
 
+  /** Promote the peeked card to current and resume training */
+  function promotePeekedCard() {
+    if (nextCardPreview.value) {
+      currentCard.value = nextCardPreview.value
+      nextCardPreview.value = null
+      completedCount.value++
+      cardStartedAt = Date.now()
+      resumeTimer()
+    }
+  }
+
   function startTraining() {
     buildDeck()
-    drawCard()
+    peekNextCard()
     startTimer()
+    pauseTimer()
     currentStep.value = 3
   }
 
-  function nextCard() {
+  /**
+   * Called when user finishes a set.
+   * Returns 'rest' if there are more cards (component should show countdown),
+   * or 'done' if training is over.
+   */
+  function nextCard(): 'rest' | 'done' {
+    logCurrentCard()
     if (deck.value.length > 0) {
-      drawCard()
+      pauseTimer()
+      peekNextCard()
+      return 'rest'
     } else {
-      logCurrentCard()
       stopTimer()
       currentCard.value = null
-      currentStep.value = 4 // done
+      currentStep.value = 4
+      return 'done'
     }
   }
 
@@ -248,16 +296,16 @@ export const useTrainingStore = defineStore('training', () => {
     surpriseEnabled.value = false
     surpriseCount.value = 4
     surpriseReps.value = Math.round(1.5 * 10)
+    restSeconds.value = 3
     deck.value = []
     currentCard.value = null
+    nextCardPreview.value = null
     completedCards.value = []
     seriesLog.value = []
     cardStartedAt = 0
     completedCount.value = 0
     totalCards.value = 0
     elapsedSeconds.value = 0
-    startTime.value = 0
-    endTime.value = 0
   }
 
   return {
@@ -270,6 +318,7 @@ export const useTrainingStore = defineStore('training', () => {
     surpriseEnabled,
     surpriseCount,
     surpriseReps,
+    restSeconds,
     selectedExercises,
     canContinueFromExercises,
     canContinueFromReps,
@@ -277,6 +326,7 @@ export const useTrainingStore = defineStore('training', () => {
     remainingCards,
     deck,
     currentCard,
+    nextCardPreview,
     completedCount,
     completedBreakdown,
     seriesLog,
@@ -289,6 +339,7 @@ export const useTrainingStore = defineStore('training', () => {
     prevStep,
     startTraining,
     nextCard,
+    promotePeekedCard,
     finishEarly,
     reset,
   }

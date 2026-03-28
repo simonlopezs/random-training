@@ -6,6 +6,7 @@ const store = useTrainingStore()
 const isSupported = !!(window.SpeechRecognition || window.webkitSpeechRecognition)
 const showVoiceSheet = ref(false)
 const keywordDraft = ref('')
+const micPermissionDenied = ref(false)
 
 function onToggleVoice() {
   if (store.voiceEnabled) {
@@ -16,13 +17,21 @@ function onToggleVoice() {
   }
 }
 
-function confirmVoice() {
+async function confirmVoice() {
   const trimmed = keywordDraft.value.trim()
   if (trimmed) {
     store.voiceKeyword = trimmed.toLowerCase()
   }
-  store.voiceEnabled = true
-  showVoiceSheet.value = false
+  // Request microphone permission now so user doesn't get prompted during training
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+    stream.getTracks().forEach((t) => t.stop())
+    micPermissionDenied.value = false
+    store.voiceEnabled = true
+    showVoiceSheet.value = false
+  } catch {
+    micPermissionDenied.value = true
+  }
 }
 
 function cancelVoice() {
@@ -168,6 +177,32 @@ function cancelVoice() {
           </p>
         </div>
       </template>
+
+      <div class="border-t border-border"></div>
+
+      <!-- Rest time between sets -->
+      <div>
+        <label class="mb-2 block text-sm font-medium text-card-foreground">
+          Descanso entre series (segundos)
+        </label>
+        <div class="flex items-center justify-center gap-4">
+          <button
+            @click="store.restSeconds = Math.max(1, store.restSeconds - 1)"
+            class="flex h-10 w-10 items-center justify-center rounded-lg border border-border text-lg font-bold transition-colors hover:bg-accent active:scale-95"
+          >
+            −
+          </button>
+          <span class="min-w-[3rem] text-center text-2xl font-bold text-foreground">
+            {{ store.restSeconds }}
+          </span>
+          <button
+            @click="store.restSeconds++"
+            class="flex h-10 w-10 items-center justify-center rounded-lg border border-border text-lg font-bold transition-colors hover:bg-accent active:scale-95"
+          >
+            +
+          </button>
+        </div>
+      </div>
     </div>
 
     <!-- Voice control toggle -->
@@ -216,6 +251,9 @@ function cancelVoice() {
       </p>
       <p v-if="store.surpriseEnabled" class="text-sm text-amber-500">
         {{ store.surpriseCount }} {{ store.surpriseCount === 1 ? 'sorpresa' : 'sorpresas' }} de {{ store.surpriseReps }} {{ store.surpriseReps === 1 ? 'repetición' : 'repeticiones' }}
+      </p>
+      <p class="text-sm text-muted-foreground">
+        {{ store.restSeconds }}s de descanso entre series
       </p>
     </div>
 
@@ -267,6 +305,9 @@ function cancelVoice() {
             placeholder="siguiente"
             @keydown.enter="confirmVoice()"
           />
+          <p v-if="micPermissionDenied" class="mt-2 text-sm text-red-500">
+            Permiso de micrófono denegado. Actívalo en la configuración del navegador.
+          </p>
           <button
             @click="confirmVoice()"
             :disabled="!keywordDraft.trim()"

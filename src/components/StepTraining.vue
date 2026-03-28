@@ -1,26 +1,101 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useTrainingStore } from '@/stores/training'
 import { useSpeechCommand } from '@/composables/useSpeechCommand'
 
 const store = useTrainingStore()
-const { isListening, start } = useSpeechCommand(
+
+// Voice recognition for "next" command
+const { isListening, start: startListening, stop: stopListening } = useSpeechCommand(
   [store.voiceKeyword],
-  () => store.nextCard(),
+  () => handleNext(),
 )
 
 if (store.voiceEnabled) {
-  start()
+  startListening()
+}
+
+// Rest countdown state
+const isResting = ref(false)
+const restCountdown = ref(0)
+let restInterval: ReturnType<typeof setInterval> | null = null
+
+// The card to display: during rest it's the preview, otherwise the current card
+const displayCard = computed(() => {
+  if (isResting.value && store.nextCardPreview) return store.nextCardPreview
+  return store.currentCard
+})
+
+function speakExercise(reps: number, name: string, feminine: boolean) {
+  if (!window.speechSynthesis) return
+  const repsText = reps === 1 ? (feminine ? 'una' : 'un') : String(reps)
+  const utterance = new SpeechSynthesisUtterance(`${repsText} ${name}`)
+  utterance.lang = 'es-ES'
+  utterance.rate = 1.1
+  window.speechSynthesis.speak(utterance)
+}
+
+function startRestCountdown() {
+  isResting.value = true
+  restCountdown.value = store.restSeconds
+
+  // Announce the next exercise
+  const preview = store.nextCardPreview
+  if (preview) {
+    const name = preview.reps === 1 ? preview.exercise.singular : preview.exercise.name
+    speakExercise(preview.reps, name, preview.exercise.feminine)
+  }
+
+  restInterval = setInterval(() => {
+    restCountdown.value--
+    if (restCountdown.value <= 0) {
+      clearInterval(restInterval!)
+      restInterval = null
+      isResting.value = false
+      store.promotePeekedCard()
+    }
+  }, 1000)
+}
+
+function handleNext() {
+  if (isResting.value) return
+  const result = store.nextCard()
+  if (result === 'rest') {
+    startRestCountdown()
+  }
 }
 
 const showFinishSheet = ref(false)
+
+function handleFinishEarly() {
+  if (restInterval) {
+    clearInterval(restInterval)
+    restInterval = null
+  }
+  isResting.value = false
+  showFinishSheet.value = false
+  store.finishEarly()
+}
+
+// Start with rest countdown for the first card
+onMounted(() => {
+  if (store.nextCardPreview) {
+    startRestCountdown()
+  }
+})
+
+onUnmounted(() => {
+  if (restInterval) {
+    clearInterval(restInterval)
+  }
+  stopListening()
+})
 </script>
 
 <template>
   <div class="flex min-h-[80vh] flex-col items-center justify-center gap-8 px-4">
     <!-- Progress -->
     <div class="w-full max-w-xs">
-
       <p class="mb-2 text-center text-2xl font-mono font-semibold text-foreground">
         {{ store.formattedTime }}
       </p>
@@ -36,30 +111,45 @@ const showFinishSheet = ref(false)
       </div>
     </div>
 
+    <!-- Status badge (fixed height to prevent layout shift) -->
+    <div class="flex h-10 items-center justify-center rounded-full px-4"
+      :class="isResting ? 'bg-blue-500/10' : 'bg-muted/50'"
+    >
+      <span class="text-sm font-medium" :class="isResting ? 'text-blue-500' : 'text-muted-foreground'">
+        {{ isResting ? restCountdown : 'En curso' }}
+      </span>
+    </div>
+
     <!-- Card -->
     <div
-      v-if="store.currentCard"
-      class="flex h-64 w-64 flex-col items-center justify-center gap-4 rounded-2xl border-2 bg-card p-6 text-center shadow-lg"
-      :class="store.currentCard.surprise ? 'border-amber-500/40' : 'border-primary/20'"
+      v-if="displayCard"
+      class="flex h-64 w-64 flex-col items-center justify-center gap-4 rounded-2xl border-2 bg-card p-6 text-center shadow-lg transition-colors"
+      :class="isResting ? 'border-blue-500/50' : displayCard.surprise ? 'border-amber-500/40' : 'border-primary/20'"
     >
-      <img :src="store.currentCard.exercise.image" :alt="store.currentCard.exercise.name" class="h-24 w-24 rounded-xl object-cover" />
+      <img :src="displayCard.exercise.image" :alt="displayCard.exercise.name" class="h-24 w-24 rounded-xl object-cover" />
       <span
         class="text-6xl font-black"
-        :class="store.currentCard.surprise ? 'text-amber-500' : 'text-foreground'"
+        :class="displayCard.surprise && !isResting ? 'text-amber-500' : 'text-foreground'"
       >
-        {{ store.currentCard.reps }}
+        {{ displayCard.reps }}
       </span>
       <span class="text-2xl font-semibold text-muted-foreground">
-        {{ store.currentCard.reps === 1 ? store.currentCard.exercise.singular : store.currentCard.exercise.name }}
+        {{ displayCard.reps === 1 ? displayCard.exercise.singular : displayCard.exercise.name }}
       </span>
     </div>
 
     <!-- Next / Finish button -->
     <button
-      @click="store.nextCard()"
-      class="w-full max-w-xs rounded-lg bg-primary px-8 py-4 text-lg font-semibold text-primary-foreground shadow-md transition-transform active:scale-95"
+      @click="handleNext()"
+      :disabled="isResting"
+      :class="[
+        'w-full max-w-xs rounded-lg px-8 py-4 text-lg font-semibold shadow-md transition-transform',
+        isResting
+          ? 'cursor-not-allowed bg-muted text-muted-foreground'
+          : 'bg-primary text-primary-foreground active:scale-95',
+      ]"
     >
-      {{ store.remainingCards === 0 ? 'Terminar' : 'Siguiente' }}
+      {{ store.remainingCards === 0 && !isResting ? 'Terminar' : 'Siguiente' }}
     </button>
 
     <!-- Voice active indicator -->
@@ -103,7 +193,7 @@ const showFinishSheet = ref(false)
               Cancelar
             </button>
             <button
-              @click="showFinishSheet = false; store.finishEarly()"
+              @click="handleFinishEarly()"
               class="flex-1 rounded-lg bg-primary px-6 py-3 font-semibold text-primary-foreground active:scale-95"
             >
               Terminar
